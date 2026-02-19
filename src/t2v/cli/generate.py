@@ -2,8 +2,6 @@ import argparse
 import os
 from pathlib import Path
 
-import numpy as np
-
 from t2v.config import build_runtime_config, clear_runtime_cache, setup_environment
 from t2v.models.pipeline import load_pipeline
 from t2v.prompting.education import (
@@ -17,23 +15,11 @@ from t2v.render.generate_video import generate_frames
 from t2v.render.local_diagram import generate_local_diagram_frames
 
 
-def _frames_look_blank(video_frames) -> bool:
-    if not video_frames:
-        return True
-
-    indices = sorted({0, len(video_frames) // 2, len(video_frames) - 1})
-    means = []
-    stds = []
-    for idx in indices:
-        arr = np.asarray(video_frames[idx].convert("RGB"), dtype=np.uint8)
-        means.append(float(arr.mean()))
-        stds.append(float(arr.std()))
-
-    return max(stds) < 2.5 and (min(means) > 245.0 or max(means) < 10.0)
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Educational text-to-video generator")
+    default_chunks_path = str(
+        Path(__file__).resolve().parents[3] / "data" / "book_chunks.jsonl"
+    )
     parser.add_argument(
         "--topic",
         default="gradient flow in backpropagation",
@@ -101,6 +87,18 @@ def parse_args() -> argparse.Namespace:
         help="Guidance scale override (if > 0)",
     )
     parser.add_argument(
+        "--quality",
+        choices=("fast", "balanced", "high"),
+        default="",
+        help="Quality preset for default frames/steps/guidance when not explicitly overridden",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=-1,
+        help="Optional deterministic seed (>=0)",
+    )
+    parser.add_argument(
         "--height",
         type=int,
         default=0,
@@ -124,7 +122,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--chunks-path",
-        default="/workspace/t2v/data/book_chunks.jsonl",
+        default=default_chunks_path,
         help="Path to chunked book JSONL",
     )
     parser.add_argument(
@@ -161,6 +159,10 @@ def main() -> None:
         os.environ["NUM_INFERENCE_STEPS"] = str(args.steps)
     if args.guidance and args.guidance > 0:
         os.environ["GUIDANCE_SCALE"] = str(args.guidance)
+    if args.quality:
+        os.environ["T2V_QUALITY_PROFILE"] = args.quality
+    if args.seed is not None and args.seed >= 0:
+        os.environ["T2V_SEED"] = str(args.seed)
     if args.height and args.height > 0:
         os.environ["HEIGHT"] = str(args.height)
     if args.width and args.width > 0:
@@ -181,6 +183,7 @@ def main() -> None:
         f" steps={cfg.num_inference_steps}"
         f" guidance={cfg.guidance_scale}"
         f" dynamic_cfg={cfg.use_dynamic_cfg}"
+        f" seed={cfg.seed if cfg.seed is not None else 'auto'}"
     )
     print(
         "Cache paths:"
@@ -219,44 +222,6 @@ def main() -> None:
     else:
         negative_prompt = build_negative_prompt()
         video_frames = generate_frames(pipe, cfg, prompt, negative_prompt)
-        if _frames_look_blank(video_frames):
-            print("Detected blank/low-variance video. Retrying with stronger generation settings.")
-            rescue_prompt = (
-                prompt
-                + " Fill the full frame with clearly visible colorful objects in every scene. "
-                + "Use high contrast and avoid washed-out whites."
-            )
-            rescue_negative_prompt = (
-                negative_prompt
-                + ", blank frame, overexposed white frame, washed out frame, monochrome empty frame"
-            )
-            if cfg.model_family == "cogvideo":
-                rescue_steps = max(cfg.num_inference_steps, 36 if "5b" in cfg.model_id.lower() else 20)
-                rescue_guidance = 6.0 if "5b" in cfg.model_id.lower() else max(cfg.guidance_scale, 7.5)
-            elif cfg.model_family == "ltx":
-                rescue_steps = max(cfg.num_inference_steps, 34)
-                rescue_guidance = max(cfg.guidance_scale, 3.5)
-            elif cfg.model_family == "wan":
-                rescue_steps = max(cfg.num_inference_steps, 34)
-                rescue_guidance = max(cfg.guidance_scale, 5.5)
-            else:
-                rescue_steps = max(cfg.num_inference_steps, 28)
-                rescue_guidance = max(cfg.guidance_scale, 5.5)
-            video_frames = generate_frames(
-                pipe,
-                cfg,
-                rescue_prompt,
-                rescue_negative_prompt,
-                num_inference_steps=rescue_steps,
-                guidance_scale=rescue_guidance,
-                use_dynamic_cfg=True,
-            )
-
-            if _frames_look_blank(video_frames):
-                print(
-                    "Warning: output is still low-variance. Try higher steps or shorter video "
-                    "(e.g. NUM_INFERENCE_STEPS=45 NUM_FRAMES=9)."
-                )
 
     try:
         export_outputs(video_frames, cfg)

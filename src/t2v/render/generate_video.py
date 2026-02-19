@@ -100,6 +100,16 @@ def generate_frames(
     use_dynamic_cfg: bool | None = None,
 ):
     output_type = "np" if cfg.model_family == "wan" else "pil"
+    generator = None
+    if cfg.seed is not None:
+        try:
+            import torch
+
+            gen_device = "cuda" if cfg.device == "cuda" else "cpu"
+            generator = torch.Generator(device=gen_device).manual_seed(int(cfg.seed))
+        except Exception:
+            generator = None
+
     call_kwargs = {
         "prompt": prompt,
         "negative_prompt": negative_prompt,
@@ -113,6 +123,7 @@ def generate_frames(
         "height": cfg.height,
         "width": cfg.width,
         "output_type": output_type,
+        "generator": generator,
     }
 
     accepted = set(inspect.signature(pipe.__call__).parameters.keys())

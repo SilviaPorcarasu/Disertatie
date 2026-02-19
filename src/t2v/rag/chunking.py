@@ -234,6 +234,7 @@ def clean_chunks(
     *,
     min_words: int = 45,
     max_words: int = 220,
+    split_long_chunks: bool = True,
 ) -> Tuple[List[Chunk], List[dict]]:
     if min_words <= 0:
         raise ValueError("min_words must be > 0")
@@ -269,7 +270,8 @@ def clean_chunks(
             )
             continue
 
-        for part in _split_long_text(normalized, max_words=max_words):
+        parts = _split_long_text(normalized, max_words=max_words) if split_long_chunks else [normalized]
+        for part in parts:
             part = _strip_non_textual_references(part)
             if not part:
                 rejected.append(

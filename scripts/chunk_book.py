@@ -75,6 +75,12 @@ def parse_args() -> argparse.Namespace:
         help="Maximum words per cleaned chunk (long chunks are split)",
     )
     parser.add_argument(
+        "--split-long-chunks",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Split long chunks to max-words (use --no-split-long-chunks to keep paragraphs intact)",
+    )
+    parser.add_argument(
         "--save-rejected",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -123,6 +129,7 @@ def main() -> None:
             raw_chunks,
             min_words=max(1, args.min_words),
             max_words=max(2, args.max_words),
+            split_long_chunks=args.split_long_chunks,
         )
 
     output_path = Path(args.output)

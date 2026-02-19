@@ -2,8 +2,6 @@ import os
 import sys
 import types
 
-from diffusers import DiffusionPipeline
-
 from t2v.config import RuntimeConfig
 
 
@@ -38,6 +36,13 @@ def _patch_wan_ftfy_bug() -> None:
 
 
 def load_pipeline(cfg: RuntimeConfig):
+    try:
+        from diffusers import DiffusionPipeline
+    except Exception as exc:
+        raise RuntimeError(
+            "Missing dependency: diffusers. Install it before running diffusion engine."
+        ) from exc
+
     if cfg.model_family == "wan":
         _patch_wan_ftfy_bug()
 

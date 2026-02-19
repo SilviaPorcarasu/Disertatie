@@ -27,6 +27,7 @@ class RuntimeConfig:
     fps: int = 12
     height: int | None = None
     width: int | None = None
+    seed: int | None = None
 
 
 def setup_environment() -> None:
@@ -75,11 +76,14 @@ def clear_runtime_cache(*, purge_hf_cache: bool = False) -> None:
 
 
 def select_model_id(has_cuda: bool) -> str:
-    # Allow quick model experiments without code edits.
-    return os.getenv(
-        "T2V_MODEL_ID",
-        "THUDM/CogVideoX-5b" if has_cuda else "THUDM/CogVideoX-2b",
-    )
+    # Highest priority: explicit override for quick experiments.
+    model_override = os.getenv("T2V_MODEL_ID", "").strip()
+    if model_override:
+        return model_override
+
+    if has_cuda:
+        return os.getenv("T2V_GPU_MODEL_ID", "THUDM/CogVideoX-5b")
+    return os.getenv("T2V_CPU_MODEL_ID", "THUDM/CogVideoX-2b")
 
 
 def infer_model_family(model_id: str) -> str:
@@ -102,13 +106,26 @@ def build_runtime_config(output_path: str) -> RuntimeConfig:
     model_id = select_model_id(has_cuda)
     model_family = infer_model_family(model_id)
     is_5b = model_family == "cogvideo" and "5b" in model_id.lower()
+    quality_profile = os.getenv("T2V_QUALITY_PROFILE", "high" if has_cuda else "fast").strip().lower()
+    if quality_profile not in {"fast", "balanced", "high"}:
+        quality_profile = "balanced"
 
     fps_default = "8" if model_family == "cogvideo" else "16"
     fps = int(os.getenv("FPS", fps_default))
     if has_cuda and model_family == "cogvideo":
-        default_frames = 25 if is_5b else 33
+        if quality_profile == "fast":
+            default_frames = 17 if is_5b else 21
+        elif quality_profile == "balanced":
+            default_frames = 25 if is_5b else 29
+        else:
+            default_frames = 33 if is_5b else 37
     elif has_cuda and model_family in {"ltx", "wan", "hunyuanvideo"}:
-        default_frames = 49
+        if quality_profile == "fast":
+            default_frames = 25
+        elif quality_profile == "balanced":
+            default_frames = 33
+        else:
+            default_frames = 49
     else:
         default_frames = 17 if has_cuda else 9
     num_frames_env = os.getenv("NUM_FRAMES")
@@ -130,20 +147,27 @@ def build_runtime_config(output_path: str) -> RuntimeConfig:
             num_frames = lower if abs(num_frames - lower) <= abs(upper - num_frames) else upper
     if has_cuda:
         if model_family == "cogvideo":
-            default_steps = "28" if is_5b else "16"
-            default_guidance = "6.0" if is_5b else "7.0"
+            if quality_profile == "fast":
+                default_steps = "24" if is_5b else "16"
+                default_guidance = "5.5" if is_5b else "6.5"
+            elif quality_profile == "balanced":
+                default_steps = "32" if is_5b else "20"
+                default_guidance = "6.0" if is_5b else "7.0"
+            else:
+                default_steps = "42" if is_5b else "28"
+                default_guidance = "6.5" if is_5b else "7.5"
         elif model_family == "ltx":
-            default_steps = "30"
-            default_guidance = "3.0"
+            default_steps = "24" if quality_profile == "fast" else ("30" if quality_profile == "balanced" else "38")
+            default_guidance = "2.5" if quality_profile == "fast" else ("3.0" if quality_profile == "balanced" else "3.5")
         elif model_family == "wan":
-            default_steps = "30"
-            default_guidance = "5.0"
+            default_steps = "24" if quality_profile == "fast" else ("30" if quality_profile == "balanced" else "38")
+            default_guidance = "4.5" if quality_profile == "fast" else ("5.0" if quality_profile == "balanced" else "5.5")
         elif model_family == "hunyuanvideo":
-            default_steps = "30"
-            default_guidance = "4.5"
+            default_steps = "24" if quality_profile == "fast" else ("30" if quality_profile == "balanced" else "38")
+            default_guidance = "4.0" if quality_profile == "fast" else ("4.5" if quality_profile == "balanced" else "5.0")
         else:
-            default_steps = "20"
-            default_guidance = "5.0"
+            default_steps = "16" if quality_profile == "fast" else ("20" if quality_profile == "balanced" else "28")
+            default_guidance = "4.5" if quality_profile == "fast" else ("5.0" if quality_profile == "balanced" else "5.5")
     else:
         default_steps = "5"
         default_guidance = "5.0"
@@ -154,8 +178,10 @@ def build_runtime_config(output_path: str) -> RuntimeConfig:
     output_dir = os.path.dirname(output_path) or "."
     height_env = os.getenv("HEIGHT")
     width_env = os.getenv("WIDTH")
+    seed_env = os.getenv("T2V_SEED", "").strip()
     height = int(height_env) if height_env else None
     width = int(width_env) if width_env else None
+    seed = int(seed_env) if seed_env else None
 
     return RuntimeConfig(
         model_family=model_family,
@@ -171,4 +197,5 @@ def build_runtime_config(output_path: str) -> RuntimeConfig:
         fps=fps,
         height=height,
         width=width,
+        seed=seed,
     )

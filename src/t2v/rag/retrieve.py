@@ -34,6 +34,38 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _hf_cache_root() -> Path:
+    for key in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
+        value = os.getenv(key, "").strip()
+        if value:
+            return Path(value)
+    hf_home = os.getenv("HF_HOME", "").strip()
+    if hf_home:
+        return Path(hf_home) / "hub"
+    return Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def _local_hf_snapshot(model_id: str) -> Path | None:
+    cache_root = _hf_cache_root()
+    model_dir = cache_root / f"models--{model_id.replace('/', '--')}"
+    snapshots_dir = model_dir / "snapshots"
+    if not snapshots_dir.exists():
+        return None
+
+    ref_main = model_dir / "refs" / "main"
+    if ref_main.exists():
+        revision = ref_main.read_text(encoding="utf-8").strip()
+        if revision:
+            candidate = snapshots_dir / revision
+            if (candidate / "config.json").exists():
+                return candidate
+
+    for candidate in sorted(snapshots_dir.iterdir(), reverse=True):
+        if candidate.is_dir() and (candidate / "config.json").exists():
+            return candidate
+    return None
+
+
 def _get_encoder(model_id: str):
     cached = _ENCODER_CACHE.get(model_id)
     if cached is not None:
@@ -45,10 +77,27 @@ def _get_encoder(model_id: str):
     except Exception as exc:  # pragma: no cover - runtime dependency
         raise RuntimeError("Embedding retrieval needs `torch` and `transformers`.") from exc
 
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    model = AutoModel.from_pretrained(model_id)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = model.to(device)
+    local_snapshot = _local_hf_snapshot(model_id)
+    load_id = str(local_snapshot) if local_snapshot is not None else model_id
+    local_only = bool(local_snapshot is not None) or _env_flag("T2V_HF_LOCAL_ONLY", default=False)
+
+    tokenizer = AutoTokenizer.from_pretrained(load_id, local_files_only=local_only)
+    model = AutoModel.from_pretrained(load_id, local_files_only=local_only)
+    embed_device = os.getenv("T2V_EMBEDDING_DEVICE", "cpu").strip().lower()
+    if embed_device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    elif embed_device == "cuda" and torch.cuda.is_available():
+        device = "cuda"
+    else:
+        device = "cpu"
+    try:
+        model = model.to(device)
+    except Exception:
+        if device == "cuda":
+            device = "cpu"
+            model = model.to(device)
+        else:
+            raise
     model.eval()
 
     cached = (tokenizer, model, device)
@@ -295,9 +344,9 @@ def retrieve_context(chunks_path: Path, query: str, top_k: int = 3) -> str:
     model_id = os.getenv("T2V_EMBEDDING_MODEL_ID", DEFAULT_EMBEDDING_MODEL_ID)
     batch_size = max(1, int(os.getenv("T2V_EMBEDDING_BATCH_SIZE", "32")))
     top_k = max(1, top_k)
-    min_score = float(os.getenv("T2V_RAG_MIN_SCORE", "0.18"))
-    candidate_k = max(top_k, int(os.getenv("T2V_RAG_CANDIDATE_K", "24")))
-    context_word_budget = max(20, int(os.getenv("T2V_RAG_MAX_CONTEXT_WORDS", "80")))
+    min_score = float(os.getenv("T2V_RAG_MIN_SCORE", "0.12"))
+    candidate_k = max(top_k, int(os.getenv("T2V_RAG_CANDIDATE_K", "48")))
+    context_word_budget = max(40, int(os.getenv("T2V_RAG_MAX_CONTEXT_WORDS", "220")))
     min_chunk_words = max(10, int(os.getenv("T2V_RAG_MIN_CHUNK_WORDS", "25")))
     rag_debug = _env_flag("T2V_RAG_DEBUG", default=False)
     rag_debug_top_n = max(1, int(os.getenv("T2V_RAG_DEBUG_TOP_N", "8")))
