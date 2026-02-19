@@ -1,4 +1,4 @@
-# t2v (Text-to-Video, Academic)
+# Disertatie - t2v (Text-to-Video, Academic)
 
 Clean project structure with two entry scripts:
 
