@@ -26,6 +26,57 @@ _NOISY_PATTERNS = (
 
 _OCR_NOISE_MARKERS = ("/nul", "/stx", "/esc", "/dc", "/nak", "c141")
 
+_CUE_STOPWORDS = {
+    "about",
+    "across",
+    "after",
+    "all",
+    "also",
+    "and",
+    "any",
+    "are",
+    "around",
+    "because",
+    "between",
+    "can",
+    "cause",
+    "clear",
+    "each",
+    "for",
+    "from",
+    "how",
+    "into",
+    "its",
+    "like",
+    "make",
+    "more",
+    "most",
+    "must",
+    "not",
+    "only",
+    "order",
+    "other",
+    "same",
+    "show",
+    "step",
+    "than",
+    "that",
+    "the",
+    "their",
+    "them",
+    "then",
+    "this",
+    "those",
+    "through",
+    "use",
+    "using",
+    "very",
+    "what",
+    "when",
+    "where",
+    "with",
+}
+
 
 def _env_flag(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -333,23 +384,34 @@ def _too_similar_to_selected(text: str, selected_texts: List[str], threshold: fl
     return False
 
 
-def retrieve_context(chunks_path: Path, query: str, top_k: int = 3) -> str:
+def _retrieval_config(top_k: int) -> dict[str, int | float | bool]:
+    return {
+        "top_k": max(1, top_k),
+        "batch_size": max(1, int(os.getenv("T2V_EMBEDDING_BATCH_SIZE", "32"))),
+        "min_score": float(os.getenv("T2V_RAG_MIN_SCORE", "0.12")),
+        "candidate_k": max(max(1, top_k), int(os.getenv("T2V_RAG_CANDIDATE_K", "48"))),
+        "context_word_budget": max(40, int(os.getenv("T2V_RAG_MAX_CONTEXT_WORDS", "220"))),
+        "min_chunk_words": max(10, int(os.getenv("T2V_RAG_MIN_CHUNK_WORDS", "25"))),
+        "rag_debug": _env_flag("T2V_RAG_DEBUG", default=False),
+        "rag_debug_top_n": max(1, int(os.getenv("T2V_RAG_DEBUG_TOP_N", "8"))),
+    }
+
+
+def _retrieve_ranked_rows(
+    *,
+    chunks_path: Path,
+    query: str,
+    top_k: int,
+) -> list[dict]:
     if not chunks_path.exists():
-        return ""
+        return []
 
     query = query.strip()
     if not query:
-        return ""
+        return []
 
+    cfg = _retrieval_config(top_k)
     model_id = os.getenv("T2V_EMBEDDING_MODEL_ID", DEFAULT_EMBEDDING_MODEL_ID)
-    batch_size = max(1, int(os.getenv("T2V_EMBEDDING_BATCH_SIZE", "32")))
-    top_k = max(1, top_k)
-    min_score = float(os.getenv("T2V_RAG_MIN_SCORE", "0.12"))
-    candidate_k = max(top_k, int(os.getenv("T2V_RAG_CANDIDATE_K", "48")))
-    context_word_budget = max(40, int(os.getenv("T2V_RAG_MAX_CONTEXT_WORDS", "220")))
-    min_chunk_words = max(10, int(os.getenv("T2V_RAG_MIN_CHUNK_WORDS", "25")))
-    rag_debug = _env_flag("T2V_RAG_DEBUG", default=False)
-    rag_debug_top_n = max(1, int(os.getenv("T2V_RAG_DEBUG_TOP_N", "8")))
 
     index_override = os.getenv("T2V_EMBEDDING_INDEX_PATH", "").strip()
     index_path = Path(index_override) if index_override else _default_index_path(chunks_path)
@@ -357,25 +419,25 @@ def retrieve_context(chunks_path: Path, query: str, top_k: int = 3) -> str:
     try:
         rows = _load_chunks(chunks_path)
         if not rows:
-            return ""
+            return []
         chunk_embeddings = _load_or_build_embeddings(
             chunks_path=chunks_path,
             rows=rows,
             model_id=model_id,
-            batch_size=batch_size,
+            batch_size=int(cfg["batch_size"]),
             index_path=index_path,
         )
         query_embedding = _embed_texts([query], model_id=model_id, batch_size=1)
     except Exception as exc:  # pragma: no cover - runtime/network dependent
         print(f"Embedding RAG unavailable: {exc}")
-        return ""
+        return []
 
     if query_embedding.shape[0] == 0:
-        return ""
+        return []
 
     raw_scores = chunk_embeddings @ query_embedding[0]
-    candidate_indices = np.argsort(raw_scores)[::-1][: min(candidate_k, len(rows))]
-    scored_rows: List[Tuple[float, float, str, str]] = []
+    candidate_indices = np.argsort(raw_scores)[::-1][: min(int(cfg["candidate_k"]), len(rows))]
+    scored_rows: list[tuple[float, float, str, str, str]] = []
     for idx in candidate_indices:
         row = rows[int(idx)]
         raw = float(raw_scores[int(idx)])
@@ -383,14 +445,15 @@ def retrieve_context(chunks_path: Path, query: str, top_k: int = 3) -> str:
         if not text:
             continue
         score = _penalize_noisy_text(text, raw)
-        if score < min_score:
+        if score < float(cfg["min_score"]):
             continue
         chunk_id = str(row.get("chunk_id", f"row-{int(idx)}"))
-        scored_rows.append((score, raw, chunk_id, text))
+        source = str(row.get("source", ""))
+        scored_rows.append((score, raw, chunk_id, source, text))
 
     scored_rows.sort(key=lambda x: x[0], reverse=True)
 
-    if rag_debug:
+    if bool(cfg["rag_debug"]):
         print(
             "RAG debug:"
             f" query={query!r}"
@@ -398,48 +461,240 @@ def retrieve_context(chunks_path: Path, query: str, top_k: int = 3) -> str:
             f" rows={len(rows)}"
             f" candidates={len(candidate_indices)}"
             f" kept={len(scored_rows)}"
-            f" min_score={min_score}"
+            f" min_score={cfg['min_score']}"
         )
-        for rank, (score, raw, chunk_id, text) in enumerate(scored_rows[:rag_debug_top_n], start=1):
+        for rank, (score, raw, chunk_id, _source, text) in enumerate(
+            scored_rows[: int(cfg["rag_debug_top_n"])], start=1
+        ):
             penalty = raw - score
             print(
                 f"  [{rank}] final={score:.4f} raw={raw:.4f} penalty={penalty:.4f} "
                 f"words={len(text.split())} id={chunk_id} text={_preview(text)}"
             )
 
-    selected: List[str] = []
-    seen = set()
+    selected: list[dict] = []
+    selected_texts: list[str] = []
     used_words = 0
-    selected_meta: List[str] = []
-    for score, raw, chunk_id, text in scored_rows:
-        if text in seen:
+    for score, raw, chunk_id, source, text in scored_rows:
+        if text in selected_texts:
             continue
-        if _too_similar_to_selected(text, selected):
+        if _too_similar_to_selected(text, selected_texts):
             continue
 
         words = text.split()
-        if len(words) < min_chunk_words:
+        if len(words) < int(cfg["min_chunk_words"]):
             continue
-        remaining = context_word_budget - used_words
+        remaining = int(cfg["context_word_budget"]) - used_words
         if remaining <= 0:
             break
         if len(words) > remaining:
-            if remaining < min_chunk_words:
+            if remaining < int(cfg["min_chunk_words"]):
                 break
             text = " ".join(words[:remaining]).strip()
             words = text.split()
 
-        selected.append(text)
-        selected_meta.append(f"{chunk_id}:{score:.4f}/{raw:.4f}")
-        seen.add(text)
+        selected.append(
+            {
+                "chunk_id": chunk_id,
+                "source": source,
+                "score": float(score),
+                "raw_score": float(raw),
+                "text": text,
+            }
+        )
+        selected_texts.append(text)
         used_words += len(words)
-        if len(selected) >= min(top_k, len(rows)):
+        if len(selected) >= int(cfg["top_k"]):
             break
 
-    if not selected:
+    if bool(cfg["rag_debug"]) and selected:
+        meta = ", ".join(
+            f"{row['chunk_id']}:{row['score']:.4f}/{row['raw_score']:.4f}"
+            for row in selected
+        )
+        print("RAG debug selected:", meta)
+
+    return selected
+
+
+def _extract_top_keywords(texts: list[str], max_keywords: int = 12) -> list[str]:
+    counts: dict[str, int] = {}
+    for text in texts:
+        for token in re.findall(r"[a-z][a-z0-9\-]{2,}", text.lower()):
+            if token in _CUE_STOPWORDS:
+                continue
+            counts[token] = counts.get(token, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [token for token, _freq in ranked[:max(1, max_keywords)]]
+
+
+_VISUAL_CUE_KEYWORDS = (
+    "fig.",
+    "figure",
+    "table",
+    "diagram",
+    "flow",
+    "tree",
+    "circle",
+    "boundary",
+    "classifier",
+)
+
+_MOTION_CUE_MAP = {
+    "backprop": [
+        "glowing dot moves backward along arrows",
+        "arrows glow sequentially",
+    ],
+    "gradient": [
+        "glowing dot moves backward along arrows",
+        "arrows glow sequentially",
+    ],
+    "search": [
+        "best node highlights",
+        "arrow transitions between states",
+    ],
+    "hill": [
+        "best node highlights",
+        "arrow transitions between states",
+    ],
+    "climbing": [
+        "best node highlights",
+        "arrow transitions between states",
+    ],
+    "bayes": [
+        "venn overlap highlights",
+        "bar chart animates",
+    ],
+    "probability": [
+        "venn overlap highlights",
+        "bar chart animates",
+    ],
+}
+
+_DEFAULT_CONSTRAINTS = [
+    "same layout, stable camera, minimal motion",
+    "consistent object identity across frames",
+    "no readable on-screen text or formulas",
+]
+
+_DEFAULT_VISUAL_CUES = [
+    "clean diagram with high-contrast nodes and arrows",
+    "single structured flow chart with clear boundaries",
+]
+
+_DEFAULT_MOTION_CUES = [
+    "arrows glow sequentially",
+    "key node highlights in causal order",
+]
+
+
+def _truncate_words(text: str, max_words: int) -> str:
+    words = re.sub(r"\s+", " ", text).strip().split()
+    if len(words) <= max_words:
+        return " ".join(words)
+    return " ".join(words[:max_words])
+
+
+def _extract_visual_cues(texts: list[str], max_cues: int = 6) -> list[str]:
+    cues: list[str] = []
+    seen: set[str] = set()
+    for text in texts:
+        for sentence in re.split(r"(?<=[\.\!\?;:])\s+|\n+", text):
+            sentence = re.sub(r"\s+", " ", sentence).strip(" .,:;")
+            if not sentence:
+                continue
+            lowered = sentence.lower()
+            if not any(keyword in lowered for keyword in _VISUAL_CUE_KEYWORDS):
+                continue
+            sentence = re.sub(
+                r"^\s*(?:fig(?:ure)?\.?|table)\s*\d+(?:\.\d+)*\s*[:\-]?\s*",
+                "",
+                sentence,
+                flags=re.IGNORECASE,
+            ).strip(" .,:;")
+            if not sentence:
+                continue
+            phrase = _truncate_words(sentence, max_words=14)
+            if len(phrase.split()) < 3:
+                continue
+            key = phrase.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cues.append(phrase)
+            if len(cues) >= max_cues:
+                return cues
+    return cues
+
+
+def _fallback_visual_cues(query: str, concepts: list[str]) -> list[str]:
+    text = f"{query.lower()} {' '.join(concepts)}"
+    visual = list(_DEFAULT_VISUAL_CUES)
+    if any(k in text for k in ("gradient", "backprop", "chain", "layer", "weight")):
+        visual.insert(0, "layered network diagram with forward and backward arrows")
+    elif any(k in text for k in ("tree", "search", "hill", "state")):
+        visual.insert(0, "state-space tree with selected path and candidate branches")
+    elif any(k in text for k in ("bayes", "probability", "posterior", "prior")):
+        visual.insert(0, "venn-style probability diagram with supporting bar chart")
+    return list(dict.fromkeys(visual))[:6]
+
+
+def _build_motion_cues(query: str, concepts: list[str]) -> list[str]:
+    concept_terms = set(concepts)
+    concept_terms.update(_extract_top_keywords([query], max_keywords=8))
+    motion: list[str] = []
+    for token in concept_terms:
+        mapped = _MOTION_CUE_MAP.get(token)
+        if not mapped:
+            continue
+        for cue in mapped:
+            if cue not in motion:
+                motion.append(cue)
+    if not motion:
+        motion.extend(_DEFAULT_MOTION_CUES)
+    return motion[:6]
+
+
+def retrieve_cues(chunks_path: Path, query: str, top_k: int = 3) -> dict:
+    selected = _retrieve_ranked_rows(chunks_path=chunks_path, query=query, top_k=top_k)
+    texts = [str(row.get("text", "")) for row in selected if str(row.get("text", "")).strip()]
+    concepts = _extract_top_keywords(texts, max_keywords=12) if texts else []
+    visual_cues = _extract_visual_cues(texts, max_cues=6)
+    if not visual_cues:
+        visual_cues = _fallback_visual_cues(query, concepts)
+    motion_cues = _build_motion_cues(query, concepts)
+
+    hits = [
+        {
+            "chunk_id": str(row.get("chunk_id", "")),
+            "source": str(row.get("source", "")),
+            "score": round(float(row.get("score", 0.0)), 6),
+        }
+        for row in selected
+    ]
+
+    return {
+        "query": query,
+        "hits": hits,
+        "concepts": concepts,
+        "visual_cues": visual_cues,
+        "motion_cues": motion_cues,
+        "constraints": list(_DEFAULT_CONSTRAINTS),
+    }
+
+
+def save_retrieval_json(cues: dict, output_dir: str | Path) -> Path:
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "retrieval.json"
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(cues, f, ensure_ascii=True, indent=2)
+    return out_path
+
+
+def retrieve_context(chunks_path: Path, query: str, top_k: int = 3) -> str:
+    selected = _retrieve_ranked_rows(chunks_path=chunks_path, query=query, top_k=top_k)
+    texts = [str(row.get("text", "")) for row in selected if str(row.get("text", "")).strip()]
+    if not texts:
         return ""
-
-    if rag_debug:
-        print("RAG debug selected:", ", ".join(selected_meta))
-
-    return "\n\n".join(selected)
+    return "\n\n".join(texts)

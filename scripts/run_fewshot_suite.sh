@@ -6,7 +6,7 @@ CLIP_SECONDS="${2:-5}"
 DRY_RUN="${3:-0}"
 
 OUT_ROOT="/workspace/Disertatie/outputs/fewshot_suite"
-MODEL_ID="${T2V_MODEL_ID:-THUDM/CogVideoX-5b}"
+MODEL_ID="${T2V_MODEL_ID:-Wan-AI/Wan2.1-T2V-14B-Diffusers}"
 SEED="${T2V_SEED:-42}"
 
 topics=(

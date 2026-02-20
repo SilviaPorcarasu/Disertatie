@@ -5,7 +5,7 @@ import sys
 
 
 def _bootstrap_cache_env() -> None:
-    cache_root = "/workspace/.cache"
+    cache_root = os.getenv("T2V_CACHE_ROOT", "").strip() or "/workspace/.cache"
     hf_root = f"{cache_root}/huggingface"
     hub_root = f"{hf_root}/hub"
     tmp_root = f"{cache_root}/tmp"
@@ -34,8 +34,8 @@ from t2v.rag.chunking import (
 )
 from t2v.rag.retrieve import DEFAULT_EMBEDDING_MODEL_ID, build_embedding_index
 
-DEFAULT_INPUT = "/workspace/t2v/data/2017_Book_AnIntroductionToMachineLearnin.pdf"
-DEFAULT_OUTPUT = "/workspace/t2v/data/book_chunks.jsonl"
+DEFAULT_INPUT = "/workspace/Disertatie/data/2017_Book_AnIntroductionToMachineLearnin.pdf"
+DEFAULT_OUTPUT = "/workspace/Disertatie/data/book_chunks.jsonl"
 
 
 def parse_args() -> argparse.Namespace:

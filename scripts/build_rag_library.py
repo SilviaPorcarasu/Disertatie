@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def _bootstrap_cache_env() -> None:
-    cache_root = "/workspace/.cache"
+    cache_root = os.getenv("T2V_CACHE_ROOT", "").strip() or "/workspace/.cache"
     hf_root = f"{cache_root}/huggingface"
     hub_root = f"{hf_root}/hub"
     tmp_root = f"{cache_root}/tmp"

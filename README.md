@@ -16,21 +16,130 @@ Clean project structure with two entry scripts:
 - `data/`: source docs + generated RAG artifacts (`book_chunks.jsonl`, `book_chunks.embeddings.npz`)
 - `outputs/`: generated video and frame snapshots
 
+## Setup (once)
+
+```bash
+# One command bootstrap (recommended)
+bash /workspace/Disertatie/scripts/bootstrap_env.sh
+
+# OR manual setup
+python3 -m venv /workspace/.venv
+source /workspace/.venv/bin/activate
+pip install --upgrade pip
+pip install -r /workspace/Disertatie/requirements.txt
+
+# Preflight checks (fails fast if something is missing)
+python /workspace/Disertatie/scripts/check_env.py
+```
+
+## Docker (recommended)
+
+```bash
+cd /workspace/Disertatie
+
+# Build image once
+docker compose build t2v
+
+# Sanity check dependencies inside container
+docker compose run --rm t2v python scripts/check_env.py
+
+# Chunk + embedding index
+docker compose run --rm t2v python scripts/chunk_book.py \
+  --input /workspace/Disertatie/data/2017_Book_AnIntroductionToMachineLearnin.pdf \
+  --output /workspace/Disertatie/data/book_chunks.jsonl
+
+# Deterministic local engine (no model download)
+docker compose run --rm t2v python scripts/generate.py \
+  --engine local \
+  --topic "gradient descent explainer" \
+  --use-rag \
+  --seconds 4 \
+  --output /workspace/Disertatie/outputs/local_demo.mp4
+```
+
+GPU diffusion run (requires NVIDIA Container Toolkit):
+
+```bash
+docker compose --profile gpu run --rm t2v-gpu python scripts/generate.py \
+  --engine diffusion \
+  --model-id "Wan-AI/Wan2.1-T2V-14B-Diffusers" \
+  --topic "gradient flow in backpropagation" \
+  --use-rag \
+  --seconds 4 \
+  --output /workspace/Disertatie/outputs/gpu_demo.mp4
+```
+
+If GPU is not visible in container, validate host runtime first:
+
+```bash
+docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+```
+
 ## Run
 
 ```bash
 source /workspace/.venv/bin/activate
 
 # 1) Build/refresh paragraph chunks + embedding index
-python /workspace/t2v/scripts/chunk_book.py
+python /workspace/Disertatie/scripts/chunk_book.py
 
 # 2) Generate video with semantic RAG
-python /workspace/t2v/scripts/generate.py \
+python /workspace/Disertatie/scripts/generate.py \
   --topic "an explainer video showing how gradients propagate in backpropagation" \
   --audience "undergraduate students" \
   --objective "understand gradient flow and weight updates" \
   --seconds 4 \
   --use-rag
+```
+
+Default model is Wan 2.1 14B (`Wan-AI/Wan2.1-T2V-14B-Diffusers`) unless you override `--model-id` or `T2V_MODEL_ID`.
+`--fallback-local-on-fail` is enabled by default, so if diffusion cannot load/run, export falls back to local deterministic rendering.
+
+Quick run commands:
+
+```bash
+# Any topic (minimal input): topic only, robust defaults for objective/style
+/workspace/.venv/bin/python /workspace/Disertatie/scripts/generate.py \
+  --engine diffusion \
+  --topic "explain A* search on a graph, step by step" \
+  --seconds 4 \
+  --output /workspace/Disertatie/outputs/any_topic.mp4
+
+# Semantic RAG (recommended): retrieve cues -> scene plan -> per-scene generation
+/workspace/.venv/bin/python /workspace/Disertatie/scripts/generate.py \
+  --engine diffusion \
+  --model-id "Wan-AI/Wan2.1-T2V-14B-Diffusers" \
+  --use-rag \
+  --rag-mode semantic \
+  --scene-frames 16 \
+  --topic "gradient flow in backpropagation" \
+  --audience "undergraduate students" \
+  --objective "understand gradient flow and weight updates" \
+  --seconds 4 \
+  --output /workspace/Disertatie/outputs/wan_semantic.mp4
+
+# Overlay RAG (legacy mode): inject raw retrieved context in prompt
+/workspace/.venv/bin/python /workspace/Disertatie/scripts/generate.py \
+  --engine diffusion \
+  --model-id "Wan-AI/Wan2.1-T2V-14B-Diffusers" \
+  --use-rag \
+  --rag-mode overlay \
+  --topic "gradient flow in backpropagation" \
+  --seconds 4 \
+  --output /workspace/Disertatie/outputs/wan_overlay.mp4
+
+# Local deterministic engine (no diffusion model download)
+/workspace/.venv/bin/python /workspace/Disertatie/scripts/generate.py \
+  --engine local \
+  --use-rag \
+  --rag-mode semantic \
+  --topic "gradient descent explainer" \
+  --seconds 4 \
+  --output /workspace/Disertatie/outputs/local_semantic.mp4
+
+# End-to-end demo scripts
+bash /workspace/Disertatie/scripts/run_gradient_demo.sh
+bash /workspace/Disertatie/scripts/run_fewshot_suite.sh high 5
 ```
 
 ## Notes
@@ -67,19 +176,35 @@ Generation overrides (CLI):
 - `--steps`
 - `--guidance`
 - `--height` / `--width`
-- `--purge-hf-cache` (only if you intentionally want full redownload)
+- `--prune-hf-cache / --no-prune-hf-cache` (default: enabled)
+- `--purge-hf-cache` (full delete, forces redownload)
+- `--fallback-local-on-fail / --no-fallback-local-on-fail` (default: enabled)
+- `T2V_PURGE_HF_CACHE=1` (enable full purge by default for every run)
+- `T2V_CACHE_ROOT=/path/to/external/cache` (move HF/tmp cache to mounted external storage)
+- `T2V_DTYPE=fp16|bf16` (Wan runs well with `fp16`; use `bf16` on supported GPUs)
+- `T2V_RETRY_ON_BLACK=1` (default: enabled; one automatic retry if frames are near-black)
+- `T2V_RETRY_ON_BLANK=1` (default: enabled; retry for near-black and washed-out outputs)
+- `T2V_WHITE_RETRY_GUIDANCE` / `T2V_WHITE_RETRY_STEPS` (retry knobs for washed-out outputs)
+- `--print-prompt` (debug final prompt content before inference)
+- `--use-llm-planner` + `--planner-model-id` (scene planning with Llama before RAG/video)
 
 Example model switch:
 
 ```bash
-# Smaller CogVideoX
-/workspace/.venv/bin/python /workspace/t2v/scripts/generate.py \
+# Wan 2.1 14B (default GPU model)
+/workspace/.venv/bin/python /workspace/Disertatie/scripts/generate.py \
+  --model-id "Wan-AI/Wan2.1-T2V-14B-Diffusers" \
+  --seconds 4 --fps 16 --steps 30 --guidance 5.0 --use-rag \
+  --topic "a clean academic diagram showing gradient descent"
+
+# Smaller CogVideoX (alternative)
+/workspace/.venv/bin/python /workspace/Disertatie/scripts/generate.py \
   --model-id "THUDM/CogVideoX-2b" \
-  --seconds 4 --fps 8 --steps 24 --use-rag \
+  --seconds 4 --fps 8 --steps 24 --guidance 5.0 --use-rag \
   --topic "a clean academic diagram showing gradient descent"
 
 # LTX Video
-/workspace/.venv/bin/python /workspace/t2v/scripts/generate.py \
+/workspace/.venv/bin/python /workspace/Disertatie/scripts/generate.py \
   --model-id "Lightricks/LTX-Video-0.9.1" \
   --seconds 4 --fps 16 --steps 30 --guidance 3.0 --use-rag \
   --topic "a clean academic diagram showing gradient descent"
@@ -88,14 +213,32 @@ Example model switch:
 Deterministic local academic diagrams (no video model download):
 
 ```bash
-/workspace/.venv/bin/python /workspace/t2v/scripts/generate.py \
+/workspace/.venv/bin/python /workspace/Disertatie/scripts/generate.py \
   --engine local \
   --topic "a clean academic diagram explaining gradient descent" \
   --use-rag --seconds 4 --fps 16 --height 720 --width 1280 \
-  --output /workspace/t2v/outputs/local_demo.mp4
+  --output /workspace/Disertatie/outputs/local_demo.mp4
 ```
 
 ## Troubleshooting
+
+If video export fails with ffmpeg/imageio backend errors:
+
+```bash
+source /workspace/.venv/bin/activate
+pip install -r /workspace/Disertatie/requirements.txt
+# optional system binary (if you control the OS/container)
+apt-get update && apt-get install -y ffmpeg
+```
+
+Without ffmpeg, runtime falls back to exporting a `.gif` next to the requested output path.
+
+If you run CogVideoX and tokenizer load fails with `protobuf` / `tiktoken` errors:
+
+```bash
+source /workspace/.venv/bin/activate
+pip install protobuf tiktoken
+```
 
 If download fails with `No space left on device (os error 28)`:
 
@@ -104,11 +247,15 @@ df -h /
 du -h -d 2 /root/.cache/huggingface/hub | sort -h | tail -n 20
 ```
 
+For low storage quotas, keep automatic cache pruning enabled (default). It removes
+unused model snapshots before each generation run and keeps only the active model
+(plus embedding model when RAG is enabled).
+
 If `/root` is full, remove stale model cache there:
 
 ```bash
 rm -rf /root/.cache/huggingface/hub/models--Lightricks--LTX-Video-0.9.1
-rm -rf /root/.cache/huggingface/hub/models--THUDM--CogVideoX-5b
+rm -rf /root/.cache/huggingface/hub/models--Wan-AI--Wan2.1-T2V-1.3B-Diffusers
 ```
 
-The runtime now forces HF cache + temp files to `/workspace/.cache`.
+Default cache root is `/workspace/.cache`; override with `T2V_CACHE_ROOT` for external storage mounts.

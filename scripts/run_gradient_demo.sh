@@ -13,7 +13,7 @@ python3 scripts/generate.py \
   --engine diffusion \
   --quality high \
   --seed "${T2V_SEED:-42}" \
-  --model-id "${T2V_MODEL_ID:-THUDM/CogVideoX-5b}" \
+  --model-id "${T2V_MODEL_ID:-Wan-AI/Wan2.1-T2V-14B-Diffusers}" \
   --use-rag \
   --rag-query "backpropagation gradient flow chain rule weight updates neural network" \
   --topic "backpropagation gradient demo: forward flow then backward gradients then weight updates, clean 2D network animation, no on-screen text" \
@@ -21,10 +21,10 @@ python3 scripts/generate.py \
   --objective "understand backward gradient flow and weight updates" \
   --style "flat technical infographic, high contrast, stable camera, smooth motion, no labels" \
   --seconds 5 \
-  --fps 8 \
+  --fps 16 \
   --frames 33 \
-  --steps 42 \
-  --guidance 6.5 \
+  --steps 30 \
+  --guidance 5.0 \
   --output "${OUT_PATH}"
 
 echo "Saved: ${OUT_PATH}"

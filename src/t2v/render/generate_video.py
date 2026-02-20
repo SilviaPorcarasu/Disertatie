@@ -20,8 +20,22 @@ def _to_pil_frame(frame) -> Image.Image:
 
     if arr.dtype != np.uint8:
         if np.issubdtype(arr.dtype, np.floating):
-            arr = np.clip(arr, 0.0, 1.0)
-            arr = (arr * 255.0).astype(np.uint8)
+            finite = arr[np.isfinite(arr)]
+            if finite.size == 0:
+                arr = np.zeros_like(arr, dtype=np.uint8)
+            else:
+                min_v = float(finite.min())
+                max_v = float(finite.max())
+                # Handle common diffusion output ranges robustly.
+                # [-1, 1] -> [0, 255]
+                if min_v < 0.0 and max_v <= 1.05:
+                    arr = ((np.clip(arr, -1.0, 1.0) + 1.0) * 127.5).astype(np.uint8)
+                # [0, 1] -> [0, 255]
+                elif max_v <= 1.05:
+                    arr = (np.clip(arr, 0.0, 1.0) * 255.0).astype(np.uint8)
+                # Assume [0, 255]-like float tensor
+                else:
+                    arr = np.clip(arr, 0.0, 255.0).astype(np.uint8)
         else:
             arr = np.clip(arr, 0, 255).astype(np.uint8)
 
@@ -95,11 +109,13 @@ def generate_frames(
     prompt: str,
     negative_prompt: str,
     *,
+    num_frames: int | None = None,
     num_inference_steps: int | None = None,
     guidance_scale: float | None = None,
     use_dynamic_cfg: bool | None = None,
 ):
-    output_type = "np" if cfg.model_family == "wan" else "pil"
+    # Prefer PIL to avoid manual post-processing artifacts across pipelines.
+    output_type = "pil"
     generator = None
     if cfg.seed is not None:
         try:
@@ -113,7 +129,7 @@ def generate_frames(
     call_kwargs = {
         "prompt": prompt,
         "negative_prompt": negative_prompt,
-        "num_frames": cfg.num_frames,
+        "num_frames": cfg.num_frames if num_frames is None else int(num_frames),
         "num_inference_steps": cfg.num_inference_steps
         if num_inference_steps is None
         else num_inference_steps,
