@@ -1,4 +1,5 @@
 import os
+import inspect
 import sys
 import types
 
@@ -129,6 +130,63 @@ def _patch_wan_ftfy_bug() -> None:
         wan_mod.ftfy = sys.modules["ftfy"]
 
 
+def _patch_sdpa_enable_gqa_compat() -> None:
+    """
+    Diffusers Wan can pass `enable_gqa` to torch SDPA on newer stacks.
+    Torch 2.4 does not accept that kwarg; patch a compatibility wrapper.
+    """
+    try:
+        import torch.nn.functional as torch_f
+    except Exception:
+        return
+
+    sdpa = getattr(torch_f, "scaled_dot_product_attention", None)
+    if sdpa is None:
+        return
+
+    try:
+        params = inspect.signature(sdpa).parameters
+    except (TypeError, ValueError):
+        return
+
+    if "enable_gqa" in params:
+        return
+    if getattr(sdpa, "_t2v_enable_gqa_compat", False):
+        return
+
+    supported = set(params.keys())
+    original_sdpa = sdpa
+
+    def _sdpa_compat(
+        query,
+        key,
+        value,
+        attn_mask=None,
+        dropout_p=0.0,
+        is_causal=False,
+        scale=None,
+        enable_gqa=False,  # ignored on old torch versions
+        **kwargs,
+    ):
+        call_kwargs = {}
+        if "attn_mask" in supported:
+            call_kwargs["attn_mask"] = attn_mask
+        if "dropout_p" in supported:
+            call_kwargs["dropout_p"] = dropout_p
+        if "is_causal" in supported:
+            call_kwargs["is_causal"] = is_causal
+        if "scale" in supported and scale is not None:
+            call_kwargs["scale"] = scale
+        # Keep any extra supported kwargs if present.
+        for key_name, value_name in kwargs.items():
+            if key_name in supported:
+                call_kwargs[key_name] = value_name
+        return original_sdpa(query, key, value, **call_kwargs)
+
+    _sdpa_compat._t2v_enable_gqa_compat = True  # type: ignore[attr-defined]
+    torch_f.scaled_dot_product_attention = _sdpa_compat
+
+
 def load_pipeline(cfg: RuntimeConfig):
     try:
         from diffusers import DiffusionPipeline
@@ -140,6 +198,7 @@ def load_pipeline(cfg: RuntimeConfig):
     pipeline_cls = DiffusionPipeline
     if cfg.model_family == "wan":
         _patch_wan_ftfy_bug()
+        _patch_sdpa_enable_gqa_compat()
         try:
             from diffusers import WanPipeline
 
