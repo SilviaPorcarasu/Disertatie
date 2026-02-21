@@ -301,6 +301,47 @@ def build_negative_prompt() -> str:
     )
 
 
+def build_lora_academic_prompt(
+    *,
+    topic: str,
+    audience: str,
+    objective: str,
+    reference_context: str = "",
+    trigger: str = "",
+    max_words: int = 88,
+) -> str:
+    topic_en = normalize_request_to_english(topic)
+    audience_en = _truncate_words(normalize_request_to_english(audience), max_words=8)
+    objective_en = _truncate_words(normalize_request_to_english(objective), max_words=14)
+    context_en = _truncate_reference_context(reference_context, max_words=16)
+    trigger_en = normalize_request_to_english(trigger)
+
+    prefix = f"{trigger_en}, " if trigger_en else ""
+    prompt_parts = [
+        f"{prefix}2D academic infographic, flat vector diagram style",
+        f"topic {topic_en}",
+        f"for {audience_en}",
+        f"goal {objective_en}",
+        "single layout with one coherent node-arrow process",
+        "ordered scenes setup then mechanism then result then recap",
+        "high contrast shapes, thick directional arrows, stable camera, smooth transitions",
+        "no on-screen text, no equations, no logos",
+    ]
+    if context_en != "None":
+        prompt_parts.append(f"reference facts {context_en}")
+
+    return _truncate_words(". ".join(prompt_parts) + ".", max_words=max_words)
+
+
+def build_lora_academic_negative_prompt(base_negative: str = "") -> str:
+    base = normalize_request_to_english(base_negative) if base_negative else build_negative_prompt()
+    extra = (
+        "photorealistic faces, realistic skin, cinematic shot, volumetric fog, painterly brushstrokes, "
+        "3d render look, glossy reflections, dramatic lens effects, abstract art texture, random scene switch"
+    )
+    return f"{base}, {extra}"
+
+
 def _get_cue_list(cues: dict | None, key: str) -> list[str]:
     if not isinstance(cues, dict):
         return []

@@ -13,6 +13,8 @@ from t2v.planning.llama import (
 )
 from t2v.prompting.education import (
     build_education_prompt,
+    build_lora_academic_negative_prompt,
+    build_lora_academic_prompt,
     build_negative_prompt,
     build_scene_plan,
     normalize_request_to_english,
@@ -35,6 +37,8 @@ MODEL_PRESETS = {
     "wan2.1-14b": "Wan-AI/Wan2.1-T2V-14B-Diffusers",
     "wan2.1-1.3b": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
 }
+
+LORA_PROMPT_PROFILES = {"none", "academic_infographic"}
 
 
 CANONICAL_TOPIC_PROMPTS = {
@@ -163,6 +167,62 @@ def _apply_diagram_lock_negative(negative_prompt: str) -> str:
         "3d render, abstract particles, unrelated objects, scene changes"
     )
     return normalize_request_to_english(f"{negative_prompt}, {extra}")
+
+
+def _resolve_lora_prompt_profile(raw_profile: str, lora_enabled: bool) -> str:
+    value = normalize_request_to_english(raw_profile).lower()
+    if not lora_enabled:
+        return "none"
+    if value in {"", "auto"}:
+        return "academic_infographic"
+    if value in LORA_PROMPT_PROFILES:
+        return value
+    return "academic_infographic"
+
+
+def _apply_lora_trigger(prompt: str, trigger: str) -> str:
+    prompt_en = normalize_request_to_english(prompt)
+    trigger_en = normalize_request_to_english(trigger)
+    if not trigger_en:
+        return prompt_en
+    if trigger_en.lower() in prompt_en.lower():
+        return prompt_en
+    return normalize_request_to_english(f"{trigger_en}, {prompt_en}")
+
+
+def _apply_lora_prompt_profile(
+    *,
+    prompt: str,
+    profile: str,
+    trigger: str,
+    topic: str,
+    audience: str,
+    objective: str,
+    reference_context: str,
+    use_template: bool,
+) -> str:
+    prompt_en = normalize_request_to_english(prompt)
+    if profile == "academic_infographic":
+        if use_template:
+            return build_lora_academic_prompt(
+                topic=topic,
+                audience=audience,
+                objective=objective,
+                reference_context=reference_context,
+                trigger=trigger,
+            )
+        styled = normalize_request_to_english(
+            "2D academic infographic, flat vector diagram, high contrast nodes and thick directional arrows. "
+            f"{prompt_en}"
+        )
+        return _apply_lora_trigger(styled, trigger)
+    return _apply_lora_trigger(prompt_en, trigger)
+
+
+def _apply_lora_negative_profile(negative_prompt: str, profile: str) -> str:
+    if profile == "academic_infographic":
+        return build_lora_academic_negative_prompt(negative_prompt)
+    return normalize_request_to_english(negative_prompt)
 
 
 def _frame_diagnostics(video_frames) -> dict[str, float]:
@@ -326,6 +386,26 @@ def parse_args() -> argparse.Namespace:
         "--lora-weight-name",
         default="",
         help="Optional LoRA weight filename inside repo/folder (e.g. pytorch_lora_weights.safetensors).",
+    )
+    parser.add_argument(
+        "--lora-prompt-profile",
+        choices=("auto", "none", "academic_infographic"),
+        default=os.getenv("T2V_LORA_PROMPT_PROFILE", "auto"),
+        help=(
+            "Prompt policy when LoRA is active. "
+            "`academic_infographic` keeps short, style-locked prompts aligned with LoRA captions."
+        ),
+    )
+    parser.add_argument(
+        "--lora-trigger",
+        default=os.getenv("T2V_LORA_TRIGGER", ""),
+        help="Optional LoRA trigger token/phrase to prepend to prompts.",
+    )
+    parser.add_argument(
+        "--lora-negative-boost",
+        action=argparse.BooleanOptionalAction,
+        default=_env_flag("T2V_LORA_NEGATIVE_BOOST", True),
+        help="Append extra anti-photorealistic negatives when LoRA prompt profile is active.",
     )
     parser.add_argument(
         "--seconds",
@@ -512,6 +592,7 @@ def main() -> None:
     style_en = normalize_request_to_english(args.style)
     prompt_override = normalize_request_to_english(args.prompt.strip())
     negative_override = normalize_request_to_english(args.negative.strip())
+    lora_trigger = normalize_request_to_english(args.lora_trigger.strip())
     rag_mode_requested = (args.rag_mode or "").strip().lower()
     if academic_stable and not rag_mode_requested:
         rag_mode_requested = "overlay"
@@ -549,6 +630,14 @@ def main() -> None:
         os.environ["T2V_LORA_SCALE"] = str(args.lora_scale)
     if args.lora_weight_name:
         os.environ["T2V_LORA_WEIGHT_NAME"] = args.lora_weight_name
+    if lora_trigger:
+        os.environ["T2V_LORA_TRIGGER"] = lora_trigger
+    lora_path_effective = os.getenv("T2V_LORA_PATH", "").strip()
+    lora_enabled = bool(lora_path_effective and args.engine == "diffusion")
+    lora_prompt_profile = _resolve_lora_prompt_profile(
+        args.lora_prompt_profile,
+        lora_enabled=lora_enabled,
+    )
     if academic_stable and args.engine == "diffusion":
         if not os.getenv("T2V_DTYPE"):
             os.environ["T2V_DTYPE"] = "bf16"
@@ -687,13 +776,15 @@ def main() -> None:
         f" dynamic_cfg={cfg.use_dynamic_cfg}"
         f" seed={cfg.seed if cfg.seed is not None else 'auto'}"
     )
-    lora_path = os.getenv("T2V_LORA_PATH", "").strip()
-    if lora_path:
+    if lora_path_effective:
         print(
             "LoRA config:"
-            f" path={lora_path}"
+            f" path={lora_path_effective}"
             f" scale={os.getenv('T2V_LORA_SCALE', '1.0')}"
             f" weight_name={os.getenv('T2V_LORA_WEIGHT_NAME', 'auto') or 'auto'}"
+            f" prompt_profile={lora_prompt_profile}"
+            f" trigger={lora_trigger or 'none'}"
+            f" negative_boost={'on' if args.lora_negative_boost else 'off'}"
         )
     print(
         "Cache paths:"
@@ -861,7 +952,20 @@ def main() -> None:
                     objective=objective_en,
                     reference_context=reference_context,
                 )
+            prompt = _apply_lora_prompt_profile(
+                prompt=prompt,
+                profile=lora_prompt_profile,
+                trigger=lora_trigger,
+                topic=topic_en,
+                audience=audience_en,
+                objective=objective_en,
+                reference_context=reference_context,
+                use_template=bool(lora_enabled and not prompt_override and not canonical_topic and not teacher_mode),
+            )
             negative_prompt = negative_override or CANONICAL_NEGATIVE_PROMPT
+            negative_prompt = _apply_diagram_lock_negative(negative_prompt)
+            if lora_enabled and args.lora_negative_boost:
+                negative_prompt = _apply_lora_negative_profile(negative_prompt, lora_prompt_profile)
             video_frames = generate_frames(pipe, cfg, prompt, negative_prompt)
         else:
             video_frames = []
@@ -876,6 +980,16 @@ def main() -> None:
                 scene_prompt = _apply_diagram_lock_prompt(
                     normalize_request_to_english(str(scene.get("prompt", "")))
                 )
+                scene_prompt = _apply_lora_prompt_profile(
+                    prompt=scene_prompt,
+                    profile=lora_prompt_profile,
+                    trigger=lora_trigger,
+                    topic=topic_en,
+                    audience=audience_en,
+                    objective=objective_en,
+                    reference_context=reference_context,
+                    use_template=False,
+                )
                 scene_negative = normalize_request_to_english(
                     str(scene.get("negative_prompt", ""))
                 )
@@ -886,6 +1000,8 @@ def main() -> None:
                         or CANONICAL_NEGATIVE_PROMPT
                     )
                 scene_negative = _apply_diagram_lock_negative(scene_negative)
+                if lora_enabled and args.lora_negative_boost:
+                    scene_negative = _apply_lora_negative_profile(scene_negative, lora_prompt_profile)
                 frames_for_scene = max(2, int(scene.get("frames", args.scene_frames)))
                 print(f"Scene {scene_id} prompt: {scene_prompt}")
                 print(f"Scene {scene_id} negative: {scene_negative}")
@@ -937,6 +1053,16 @@ def main() -> None:
                 reference_context=reference_context,
                 planner_directives=planner_directives,
             )
+        prompt = _apply_lora_prompt_profile(
+            prompt=prompt,
+            profile=lora_prompt_profile,
+            trigger=lora_trigger,
+            topic=topic_en,
+            audience=audience_en,
+            objective=objective_en,
+            reference_context=reference_context,
+            use_template=bool(lora_enabled and not prompt_override and not canonical_topic and not teacher_mode),
+        )
 
         if negative_override:
             negative_prompt = negative_override
@@ -951,6 +1077,8 @@ def main() -> None:
             negative_prompt = build_negative_prompt()
         prompt = _apply_diagram_lock_prompt(prompt)
         negative_prompt = _apply_diagram_lock_negative(negative_prompt)
+        if lora_enabled and args.lora_negative_boost:
+            negative_prompt = _apply_lora_negative_profile(negative_prompt, lora_prompt_profile)
         if cfg.model_family == "cogvideo" and len(prompt.split()) > 60:
             print(
                 "Warning: long prompt may hurt stability/topic adherence for CogVideo. "

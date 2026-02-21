@@ -176,6 +176,10 @@ Generation overrides (CLI):
 - `--steps`
 - `--guidance`
 - `--height` / `--width`
+- `--lora-path` / `--lora-scale` / `--lora-weight-name`
+- `--lora-prompt-profile` (`auto`, `none`, `academic_infographic`)
+- `--lora-trigger` (prepend LoRA trigger token to prompts)
+- `--lora-negative-boost / --no-lora-negative-boost`
 - `--prune-hf-cache / --no-prune-hf-cache` (default: enabled)
 - `--purge-hf-cache` (full delete, forces redownload)
 - `--fallback-local-on-fail / --no-fallback-local-on-fail` (default: enabled)
@@ -208,6 +212,17 @@ Example model switch:
   --model-id "Lightricks/LTX-Video-0.9.1" \
   --seconds 4 --fps 16 --steps 30 --guidance 3.0 --use-rag \
   --topic "a clean academic diagram showing gradient descent"
+
+# Wan + LoRA style lock (academic infographic)
+/workspace/.venv/bin/python /workspace/Disertatie/scripts/generate.py \
+  --model-id "Wan-AI/Wan2.1-T2V-14B-Diffusers" \
+  --lora-path "/workspace/models/lora/academic_infographic_v1" \
+  --lora-scale 0.7 \
+  --lora-prompt-profile academic_infographic \
+  --lora-trigger "acad_infov1" \
+  --topic "gradient flow in backpropagation as a clean 2D process diagram" \
+  --use-rag --rag-mode semantic \
+  --seconds 4 --fps 12 --frames 25 --steps 30 --guidance 5.0
 ```
 
 Deterministic local academic diagrams (no video model download):
