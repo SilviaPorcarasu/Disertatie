@@ -141,6 +141,7 @@ Quick run commands:
 bash /workspace/Disertatie/scripts/run_gradient_demo.sh
 bash /workspace/Disertatie/scripts/run_fewshot_suite.sh high 5
 bash /workspace/Disertatie/scripts/run_semantic_demo_pack.sh
+bash /workspace/Disertatie/scripts/run_semantic_comparison_pack.sh
 ```
 
 ## Notes
