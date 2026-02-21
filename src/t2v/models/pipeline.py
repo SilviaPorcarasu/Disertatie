@@ -1,5 +1,4 @@
 import os
-import inspect
 import sys
 import types
 
@@ -136,6 +135,7 @@ def _patch_sdpa_enable_gqa_compat() -> None:
     Torch 2.4 does not accept that kwarg; patch a compatibility wrapper.
     """
     try:
+        import torch
         import torch.nn.functional as torch_f
     except Exception:
         return
@@ -143,18 +143,20 @@ def _patch_sdpa_enable_gqa_compat() -> None:
     sdpa = getattr(torch_f, "scaled_dot_product_attention", None)
     if sdpa is None:
         return
-
-    try:
-        params = inspect.signature(sdpa).parameters
-    except (TypeError, ValueError):
-        return
-
-    if "enable_gqa" in params:
-        return
     if getattr(sdpa, "_t2v_enable_gqa_compat", False):
         return
 
-    supported = set(params.keys())
+    # Torch < 2.5 can fail when newer diffusers passes `enable_gqa`.
+    version_raw = str(getattr(torch, "__version__", "0.0")).split("+", 1)[0]
+    try:
+        major_str, minor_str, *_ = version_raw.split(".")
+        major = int(major_str)
+        minor = int(minor_str)
+    except Exception:
+        major, minor = 0, 0
+    if (major, minor) >= (2, 5):
+        return
+
     original_sdpa = sdpa
 
     def _sdpa_compat(
@@ -165,23 +167,31 @@ def _patch_sdpa_enable_gqa_compat() -> None:
         dropout_p=0.0,
         is_causal=False,
         scale=None,
-        enable_gqa=False,  # ignored on old torch versions
-        **kwargs,
+        enable_gqa=False,  # ignored on torch<2.5
+        **_kwargs,
     ):
-        call_kwargs = {}
-        if "attn_mask" in supported:
-            call_kwargs["attn_mask"] = attn_mask
-        if "dropout_p" in supported:
-            call_kwargs["dropout_p"] = dropout_p
-        if "is_causal" in supported:
-            call_kwargs["is_causal"] = is_causal
-        if "scale" in supported and scale is not None:
-            call_kwargs["scale"] = scale
-        # Keep any extra supported kwargs if present.
-        for key_name, value_name in kwargs.items():
-            if key_name in supported:
-                call_kwargs[key_name] = value_name
-        return original_sdpa(query, key, value, **call_kwargs)
+        try:
+            if scale is None:
+                return original_sdpa(
+                    query,
+                    key,
+                    value,
+                    attn_mask=attn_mask,
+                    dropout_p=dropout_p,
+                    is_causal=is_causal,
+                )
+            return original_sdpa(
+                query,
+                key,
+                value,
+                attn_mask=attn_mask,
+                dropout_p=dropout_p,
+                is_causal=is_causal,
+                scale=scale,
+            )
+        except TypeError:
+            # Older SDPA signatures may reject keyword form (e.g., `scale`).
+            return original_sdpa(query, key, value, attn_mask, dropout_p, is_causal)
 
     _sdpa_compat._t2v_enable_gqa_compat = True  # type: ignore[attr-defined]
     torch_f.scaled_dot_product_attention = _sdpa_compat
