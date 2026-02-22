@@ -140,6 +140,10 @@ Quick run commands:
 # End-to-end demo scripts
 bash /workspace/Disertatie/scripts/run_gradient_demo.sh
 bash /workspace/Disertatie/scripts/run_fewshot_suite.sh high 5
+bash /workspace/Disertatie/scripts/run_semantic_demo_pack.sh
+bash /workspace/Disertatie/scripts/run_semantic_comparison_pack.sh
+bash /workspace/Disertatie/scripts/run_course_backprop_pair.sh
+bash /workspace/Disertatie/scripts/run_course_ml_pack.sh
 ```
 
 ## Notes
@@ -176,6 +180,14 @@ Generation overrides (CLI):
 - `--steps`
 - `--guidance`
 - `--height` / `--width`
+- `--lora-path` / `--lora-scale` / `--lora-weight-name`
+- `--lora-prompt-profile` (`auto`, `none`, `academic_infographic`)
+- `--lora-trigger` (prepend LoRA trigger token to prompts)
+- `--lora-negative-boost / --no-lora-negative-boost`
+- `--course-mode` (theory-first course-style prompting/scenes)
+- `--course-template` (`auto`, `backprop`, `a_star`, `attention`, `general`)
+- `--course-rag-query` (override semantic query in course mode)
+- `--course-few-shot / --no-course-few-shot` (compact in-prompt few-shot visual hints)
 - `--prune-hf-cache / --no-prune-hf-cache` (default: enabled)
 - `--purge-hf-cache` (full delete, forces redownload)
 - `--fallback-local-on-fail / --no-fallback-local-on-fail` (default: enabled)
@@ -208,6 +220,35 @@ Example model switch:
   --model-id "Lightricks/LTX-Video-0.9.1" \
   --seconds 4 --fps 16 --steps 30 --guidance 3.0 --use-rag \
   --topic "a clean academic diagram showing gradient descent"
+
+# Wan + LoRA style lock (academic infographic)
+/workspace/.venv/bin/python /workspace/Disertatie/scripts/generate.py \
+  --model-id "Wan-AI/Wan2.1-T2V-14B-Diffusers" \
+  --lora-path "/workspace/models/lora/academic_infographic_v1" \
+  --lora-scale 0.7 \
+  --lora-prompt-profile academic_infographic \
+  --lora-trigger "acad_infov1" \
+  --topic "gradient flow in backpropagation as a clean 2D process diagram" \
+  --use-rag --rag-mode semantic \
+  --seconds 4 --fps 12 --frames 25 --steps 30 --guidance 5.0
+
+# Course-style backprop (theory-first)
+/workspace/.venv/bin/python /workspace/Disertatie/scripts/generate.py \
+  --engine diffusion \
+  --model-id "Wan-AI/Wan2.1-T2V-14B-Diffusers" \
+  --course-mode --course-template backprop \
+  --use-rag --rag-mode semantic \
+  --rag-query "backpropagation chain rule gradient flow hidden layer local derivative weight update learning rate" \
+  --topic "backpropagation in a feedforward neural network with explicit gradient flow and weight updates" \
+  --objective "understand backward gradient propagation layer by layer" \
+  --scene-frames 12 --fps 10 --frames 17 --steps 16 --guidance 4.8 \
+  --no-fallback-local-on-fail
+
+# Course-style multi-topic ML pack (no_rag + rag_semantic per topic)
+STRICT_DIFFUSION=1 bash /workspace/Disertatie/scripts/run_course_ml_pack.sh
+
+# More diversity for LoRA dataset (same topics, different seeds)
+SEED_OFFSET=100 STRICT_DIFFUSION=1 bash /workspace/Disertatie/scripts/run_course_ml_pack.sh
 ```
 
 Deterministic local academic diagrams (no video model download):

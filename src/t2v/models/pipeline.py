@@ -129,6 +129,74 @@ def _patch_wan_ftfy_bug() -> None:
         wan_mod.ftfy = sys.modules["ftfy"]
 
 
+def _patch_sdpa_enable_gqa_compat() -> None:
+    """
+    Diffusers Wan can pass `enable_gqa` to torch SDPA on newer stacks.
+    Torch 2.4 does not accept that kwarg; patch a compatibility wrapper.
+    """
+    try:
+        import torch
+        import torch.nn.functional as torch_f
+    except Exception:
+        return
+
+    sdpa = getattr(torch_f, "scaled_dot_product_attention", None)
+    if sdpa is None:
+        return
+    if getattr(sdpa, "_t2v_enable_gqa_compat", False):
+        return
+
+    # Torch < 2.5 can fail when newer diffusers passes `enable_gqa`.
+    version_raw = str(getattr(torch, "__version__", "0.0")).split("+", 1)[0]
+    try:
+        major_str, minor_str, *_ = version_raw.split(".")
+        major = int(major_str)
+        minor = int(minor_str)
+    except Exception:
+        major, minor = 0, 0
+    if (major, minor) >= (2, 5):
+        return
+
+    original_sdpa = sdpa
+
+    def _sdpa_compat(
+        query,
+        key,
+        value,
+        attn_mask=None,
+        dropout_p=0.0,
+        is_causal=False,
+        scale=None,
+        enable_gqa=False,  # ignored on torch<2.5
+        **_kwargs,
+    ):
+        try:
+            if scale is None:
+                return original_sdpa(
+                    query,
+                    key,
+                    value,
+                    attn_mask=attn_mask,
+                    dropout_p=dropout_p,
+                    is_causal=is_causal,
+                )
+            return original_sdpa(
+                query,
+                key,
+                value,
+                attn_mask=attn_mask,
+                dropout_p=dropout_p,
+                is_causal=is_causal,
+                scale=scale,
+            )
+        except TypeError:
+            # Older SDPA signatures may reject keyword form (e.g., `scale`).
+            return original_sdpa(query, key, value, attn_mask, dropout_p, is_causal)
+
+    _sdpa_compat._t2v_enable_gqa_compat = True  # type: ignore[attr-defined]
+    torch_f.scaled_dot_product_attention = _sdpa_compat
+
+
 def load_pipeline(cfg: RuntimeConfig):
     try:
         from diffusers import DiffusionPipeline
@@ -140,6 +208,7 @@ def load_pipeline(cfg: RuntimeConfig):
     pipeline_cls = DiffusionPipeline
     if cfg.model_family == "wan":
         _patch_wan_ftfy_bug()
+        _patch_sdpa_enable_gqa_compat()
         try:
             from diffusers import WanPipeline
 
