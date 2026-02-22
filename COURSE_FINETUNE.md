@@ -4,7 +4,10 @@ This guide focuses on making outputs look and behave like short course explainer
 
 ## 1) Generate Course-Style Baselines
 
-Use the dedicated pair script (same settings, with and without semantic RAG):
+Use either:
+
+- single-topic backprop pair
+- multi-topic ML pack (recommended for thesis tables)
 
 ```bash
 cd /workspace/Disertatie
@@ -12,12 +15,19 @@ source /workspace/.venv/bin/activate
 unset T2V_LORA_PATH T2V_LORA_SCALE T2V_LORA_TRIGGER
 
 STRICT_DIFFUSION=1 bash /workspace/Disertatie/scripts/run_course_backprop_pair.sh
+STRICT_DIFFUSION=1 bash /workspace/Disertatie/scripts/run_course_ml_pack.sh
 ```
 
 This saves:
 - `backprop_no_rag.mp4`
 - `backprop_rag_semantic.mp4`
 - their logs in the same folder
+
+The multi-topic pack saves per-topic folders with:
+- `no_rag/video.mp4`
+- `rag_semantic/video.mp4`
+- logs
+- summary files (`summary.csv`, `results.md`)
 
 ## 2) Build LoRA Manifest from Saved Videos
 
@@ -36,6 +46,11 @@ Outputs:
 - `/workspace/Disertatie/data/lora_course_manifest.csv`
 
 ## 3) Recommended Training Setup (A100 80GB)
+
+Few-shot note:
+- in-prompt few-shot (`--course-few-shot`) improves structural consistency
+- it does not create persistent learning by itself
+- persistent learning comes from LoRA fine-tuning on curated video-caption pairs
 
 Suggested starting hyperparameters for Wan LoRA:
 - rank `16`

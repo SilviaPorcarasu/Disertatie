@@ -365,6 +365,7 @@ def build_course_prompt(
     style: str,
     reference_context: str = "",
     template: str = "auto",
+    include_few_shot: bool = True,
     max_words: int = 120,
 ) -> str:
     topic_en = normalize_request_to_english(topic)
@@ -399,6 +400,30 @@ def build_course_prompt(
         ),
     }.get(selected, "course sequence: setup, mechanism, update, recap")
 
+    few_shot_rule = {
+        "backprop": (
+            "few-shot visual pattern: frame A forward arrows left-to-right, "
+            "frame B output loss node highlighted, "
+            "frame C gradient arrows right-to-left through every hidden layer, "
+            "frame D weight update arrows opposite gradient direction"
+        ),
+        "a_star": (
+            "few-shot visual pattern: frame A start-goal grid setup, "
+            "frame B frontier expansion by lowest f score, "
+            "frame C parent pointers traced back from goal, "
+            "frame D final optimal path highlighted"
+        ),
+        "attention": (
+            "few-shot visual pattern: frame A tokens with q k v blocks, "
+            "frame B query-key weighted links, "
+            "frame C weighted value aggregation node, "
+            "frame D contextual output recap"
+        ),
+        "general": (
+            "few-shot visual pattern: setup frame, mechanism frame, update frame, recap frame"
+        ),
+    }.get(selected, "few-shot visual pattern: setup, mechanism, update, recap")
+
     parts = [
         "course-style educational explainer, theory-first, not cinematic",
         f"topic {topic_en}",
@@ -410,6 +435,8 @@ def build_course_prompt(
         "strict causal direction and temporal continuity, no scene drift",
         "no on-screen text, no readable formulas, no logos",
     ]
+    if include_few_shot:
+        parts.append(few_shot_rule)
     if context_en != "None":
         parts.append(f"reference facts {context_en}")
 

@@ -388,6 +388,15 @@ def parse_args() -> argparse.Namespace:
         help="Optional course-mode semantic RAG query override.",
     )
     parser.add_argument(
+        "--course-few-shot",
+        action=argparse.BooleanOptionalAction,
+        default=_env_flag("T2V_COURSE_FEW_SHOT", True),
+        help=(
+            "Enable compact few-shot visual pattern hints in course-mode prompts. "
+            "Useful for stronger lecture-like structure."
+        ),
+    )
+    parser.add_argument(
         "--output",
         default="/workspace/Disertatie/outputs/demo.mp4",
         help="Output video path",
@@ -719,7 +728,10 @@ def main() -> None:
         if not (args.height and args.height > 0):
             os.environ["HEIGHT"] = "480"
         os.environ.setdefault("T2V_USE_DYNAMIC_CFG", "0")
-        print("Course mode enabled (10fps, 17f, 16steps, 832x480, theory-first prompting).")
+        print(
+            "Course mode enabled (10fps, 17f, 16steps, 832x480, theory-first prompting, "
+            f"few_shot={'on' if args.course_few_shot else 'off'})."
+        )
     if teacher_mode and args.engine == "diffusion":
         if not (args.fps and args.fps > 0):
             os.environ["FPS"] = "8"
@@ -1003,6 +1015,7 @@ def main() -> None:
                 style=style_en,
                 reference_context=reference_context,
                 template=args.course_template,
+                include_few_shot=bool(args.course_few_shot),
             )
         elif academic_stable:
             prompt = _build_academic_stable_prompt(
@@ -1152,6 +1165,7 @@ def main() -> None:
                 style=style_en,
                 reference_context=reference_context,
                 template=args.course_template,
+                include_few_shot=bool(args.course_few_shot),
             )
         elif academic_stable:
             prompt = _build_academic_stable_prompt(

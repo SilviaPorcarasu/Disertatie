@@ -19,6 +19,7 @@ BASE_ARGS=(
   --model-id "Wan-AI/Wan2.1-T2V-14B-Diffusers"
   --course-mode
   --course-template backprop
+  --course-few-shot
   --topic "${TOPIC}"
   --audience "undergraduate students"
   --objective "${OBJECTIVE}"

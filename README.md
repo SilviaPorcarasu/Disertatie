@@ -143,6 +143,7 @@ bash /workspace/Disertatie/scripts/run_fewshot_suite.sh high 5
 bash /workspace/Disertatie/scripts/run_semantic_demo_pack.sh
 bash /workspace/Disertatie/scripts/run_semantic_comparison_pack.sh
 bash /workspace/Disertatie/scripts/run_course_backprop_pair.sh
+bash /workspace/Disertatie/scripts/run_course_ml_pack.sh
 ```
 
 ## Notes
@@ -186,6 +187,7 @@ Generation overrides (CLI):
 - `--course-mode` (theory-first course-style prompting/scenes)
 - `--course-template` (`auto`, `backprop`, `a_star`, `attention`, `general`)
 - `--course-rag-query` (override semantic query in course mode)
+- `--course-few-shot / --no-course-few-shot` (compact in-prompt few-shot visual hints)
 - `--prune-hf-cache / --no-prune-hf-cache` (default: enabled)
 - `--purge-hf-cache` (full delete, forces redownload)
 - `--fallback-local-on-fail / --no-fallback-local-on-fail` (default: enabled)
@@ -241,6 +243,9 @@ Example model switch:
   --objective "understand backward gradient propagation layer by layer" \
   --scene-frames 12 --fps 10 --frames 17 --steps 16 --guidance 4.8 \
   --no-fallback-local-on-fail
+
+# Course-style multi-topic ML pack (no_rag + rag_semantic per topic)
+STRICT_DIFFUSION=1 bash /workspace/Disertatie/scripts/run_course_ml_pack.sh
 ```
 
 Deterministic local academic diagrams (no video model download):
