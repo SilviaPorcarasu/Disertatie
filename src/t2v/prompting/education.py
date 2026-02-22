@@ -342,6 +342,89 @@ def build_lora_academic_negative_prompt(base_negative: str = "") -> str:
     return f"{base}, {extra}"
 
 
+def infer_course_template(topic: str, template: str = "auto") -> str:
+    requested = normalize_request_to_english(template).lower()
+    if requested and requested != "auto":
+        return requested
+
+    text = normalize_request_to_english(topic).lower()
+    if any(k in text for k in ("backprop", "back propagation", "gradient flow", "chain rule")):
+        return "backprop"
+    if any(k in text for k in ("a*", "a-star", "astar", "shortest path", "open set", "closed set")):
+        return "a_star"
+    if any(k in text for k in ("attention", "qkv", "query key value", "self-attention")):
+        return "attention"
+    return "general"
+
+
+def build_course_prompt(
+    *,
+    topic: str,
+    audience: str,
+    objective: str,
+    style: str,
+    reference_context: str = "",
+    template: str = "auto",
+    max_words: int = 120,
+) -> str:
+    topic_en = normalize_request_to_english(topic)
+    audience_en = _truncate_words(normalize_request_to_english(audience), max_words=10)
+    objective_en = _truncate_words(normalize_request_to_english(objective), max_words=16)
+    style_en = _truncate_words(normalize_request_to_english(style), max_words=16)
+    context_en = _truncate_reference_context(reference_context, max_words=18)
+    selected = infer_course_template(topic_en, template=template)
+
+    template_rule = {
+        "backprop": (
+            "course sequence: scene1 forward pass activations across layers, "
+            "scene2 loss at output and chain-rule gradient signal from output to hidden layers, "
+            "scene3 parameter update direction opposite gradient with clear per-layer effect, "
+            "scene4 full recap of forward-loss-backward-update loop"
+        ),
+        "a_star": (
+            "course sequence: scene1 grid graph with start goal and obstacle layout, "
+            "scene2 open set expansion with f=g+h priority and closed set updates, "
+            "scene3 predecessor links reconstruct optimal path, "
+            "scene4 recap why heuristic guides efficient search"
+        ),
+        "attention": (
+            "course sequence: scene1 token sequence with query key value blocks, "
+            "scene2 similarity scores produce normalized attention weights, "
+            "scene3 weighted sum of values forms contextual token output, "
+            "scene4 recap how attention focus shifts per query token"
+        ),
+        "general": (
+            "course sequence: scene1 setup of entities, scene2 mechanism step-by-step, "
+            "scene3 causal update and outcome, scene4 concise recap"
+        ),
+    }.get(selected, "course sequence: setup, mechanism, update, recap")
+
+    parts = [
+        "course-style educational explainer, theory-first, not cinematic",
+        f"topic {topic_en}",
+        f"for {audience_en}",
+        f"objective {objective_en}",
+        f"style lock {style_en or 'flat academic infographic'}",
+        template_rule,
+        "single coherent 2D node-edge diagram, stable camera, high contrast arrows",
+        "strict causal direction and temporal continuity, no scene drift",
+        "no on-screen text, no readable formulas, no logos",
+    ]
+    if context_en != "None":
+        parts.append(f"reference facts {context_en}")
+
+    return _truncate_words(". ".join(parts) + ".", max_words=max_words)
+
+
+def build_course_negative_prompt(base_negative: str = "") -> str:
+    base = normalize_request_to_english(base_negative) if base_negative else build_negative_prompt()
+    extra = (
+        "theory mismatch, semantic drift, unrelated mechanism, fantasy metaphor scene, character acting, "
+        "decorative montage, random object insertion, abstract art texture, chaotic camera movement"
+    )
+    return f"{base}, {extra}"
+
+
 def _get_cue_list(cues: dict | None, key: str) -> list[str]:
     if not isinstance(cues, dict):
         return []
@@ -464,6 +547,183 @@ def build_scene_plan(
         "style": style_en or "flat infographic",
         "global_negative_prompt": global_negative_prompt,
         "global_constraints": global_constraints,
+        "scenes": scenes,
+    }
+
+
+def build_course_scene_plan(
+    *,
+    topic: str,
+    objective: str,
+    style: str,
+    cues: dict,
+    scene_frames: int = 12,
+    template: str = "auto",
+) -> dict:
+    topic_en = normalize_request_to_english(topic)
+    objective_en = normalize_request_to_english(objective)
+    style_en = normalize_request_to_english(style) or "flat academic infographic"
+    selected = infer_course_template(topic_en, template=template)
+
+    visual_cues = _get_cue_list(cues, "visual_cues")
+    motion_cues = _get_cue_list(cues, "motion_cues")
+    if not visual_cues:
+        visual_cues = [
+            "high-contrast node-edge process diagram",
+            "consistent entities with directional arrows",
+        ]
+    if not motion_cues:
+        motion_cues = [
+            "causal order from prerequisite to result",
+            "smooth transitions without scene jump",
+        ]
+
+    scene_frames = max(2, int(scene_frames))
+    global_negative_prompt = (
+        "blurry, noise, distortion, text, letters, numbers, formula text, watermark, logo, camera shake, "
+        "hard cut, unrelated object, semantic drift, theory mismatch"
+    )
+
+    if selected == "backprop":
+        scene_defs = [
+            (
+                "forward",
+                "scene1 forward pass through input hidden output layers with activation flow",
+                "feedforward layered network layout with clear left-to-right signal arrows",
+                "highlight activation propagation to output",
+            ),
+            (
+                "loss_gradient",
+                "scene2 loss at output then chain-rule gradient signal starts at output layer",
+                "output loss node connected to output neurons and gradient channels",
+                "animate gradient flow right-to-left through layers",
+            ),
+            (
+                "update",
+                "scene3 per-layer weight update direction opposite gradient with local derivative influence",
+                "weight edges with update arrows and magnitude emphasis",
+                "show update propagation layer-by-layer without breaking layout",
+            ),
+            (
+                "recap",
+                f"scene4 recap full forward-loss-backward-update cycle linked to objective {objective_en}",
+                "single consolidated diagram summarizing full learning step",
+                "smooth recap sweep across same entities",
+            ),
+        ]
+    elif selected == "a_star":
+        scene_defs = [
+            (
+                "setup",
+                "scene1 weighted grid graph with start, goal, obstacle regions",
+                "grid nodes and traversable edges with clear start-goal markers",
+                "introduce search frontier location",
+            ),
+            (
+                "expand",
+                "scene2 open set expansion using f = g + h priority and closed set updates",
+                "priority frontier and visited set layout in one view",
+                "ordered expansion wave toward goal",
+            ),
+            (
+                "reconstruct",
+                "scene3 predecessor links reconstruct shortest path from goal to start",
+                "parent pointer chain across selected nodes",
+                "animate backtracking then final path highlight",
+            ),
+            (
+                "recap",
+                "scene4 recap why heuristic guides efficient shortest-path discovery",
+                "comparison of explored nodes vs final optimal route",
+                "clean final sweep of full search process",
+            ),
+        ]
+    elif selected == "attention":
+        scene_defs = [
+            (
+                "setup",
+                "scene1 token sequence and corresponding query key value vectors",
+                "aligned token nodes with q k v blocks",
+                "introduce active query token focus",
+            ),
+            (
+                "scores",
+                "scene2 query-key similarity produces attention weights",
+                "weighted links from query token to key tokens",
+                "animate link strength redistribution over tokens",
+            ),
+            (
+                "aggregate",
+                "scene3 weighted sum of value vectors creates contextual output",
+                "value channels merged into contextual representation node",
+                "smooth aggregation into output token embedding",
+            ),
+            (
+                "recap",
+                "scene4 recap dynamic focus and context formation per query token",
+                "same layout with concise before-after context view",
+                "one-pass recap sweep with stable camera",
+            ),
+        ]
+    else:
+        scene_defs = [
+            (
+                "setup",
+                f"scene1 setup key entities for {topic_en}",
+                visual_cues[0],
+                motion_cues[0],
+            ),
+            (
+                "mechanism",
+                "scene2 mechanism decomposition step-by-step",
+                visual_cues[min(1, len(visual_cues) - 1)],
+                motion_cues[min(1, len(motion_cues) - 1)],
+            ),
+            (
+                "update",
+                f"scene3 causal update linked to objective {objective_en}",
+                visual_cues[0],
+                motion_cues[0],
+            ),
+            (
+                "recap",
+                "scene4 concise recap of full process",
+                visual_cues[min(1, len(visual_cues) - 1)],
+                motion_cues[min(1, len(motion_cues) - 1)],
+            ),
+        ]
+
+    scenes = []
+    for scene_id, goal, visual_cue, motion_cue in scene_defs:
+        prompt = _compose_scene_prompt(
+            topic=topic_en,
+            style=style_en,
+            goal=goal,
+            visual_cue=visual_cue,
+            motion_cue=motion_cue,
+            max_words=58,
+        )
+        scenes.append(
+            {
+                "id": scene_id,
+                "goal": goal,
+                "prompt": prompt,
+                "negative_prompt": global_negative_prompt,
+                "frames": scene_frames,
+            }
+        )
+
+    return {
+        "topic": topic_en,
+        "style": style_en,
+        "template": selected,
+        "global_negative_prompt": global_negative_prompt,
+        "global_constraints": [
+            "single coherent layout",
+            "theory-first causal flow",
+            "no readable text or formulas",
+            "no semantic drift",
+        ],
         "scenes": scenes,
     }
 
