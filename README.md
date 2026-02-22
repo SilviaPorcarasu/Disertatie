@@ -246,6 +246,9 @@ Example model switch:
 
 # Course-style multi-topic ML pack (no_rag + rag_semantic per topic)
 STRICT_DIFFUSION=1 bash /workspace/Disertatie/scripts/run_course_ml_pack.sh
+
+# More diversity for LoRA dataset (same topics, different seeds)
+SEED_OFFSET=100 STRICT_DIFFUSION=1 bash /workspace/Disertatie/scripts/run_course_ml_pack.sh
 ```
 
 Deterministic local academic diagrams (no video model download):

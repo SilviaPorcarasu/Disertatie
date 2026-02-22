@@ -12,6 +12,7 @@ RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%d_%H%M%S)}"
 OUT_ROOT="${1:-${ROOT}/outputs/course_ml_pack_${RUN_TAG}}"
 STRICT_DIFFUSION="${STRICT_DIFFUSION:-1}"
 SKIP_RAG_REBUILD="${SKIP_RAG_REBUILD:-0}"
+SEED_OFFSET="${SEED_OFFSET:-0}"
 
 # Faster defaults for iterative thesis demos.
 FPS="${T2V_FPS:-8}"
@@ -71,6 +72,8 @@ run_variant() {
   local rag_query="$5"
   local seed="$6"
   local variant="$7"
+  local final_seed
+  final_seed="$((seed + SEED_OFFSET))"
 
   local variant_dir="${OUT_ROOT}/${slug}/${variant}"
   local video_path="${variant_dir}/video.mp4"
@@ -101,7 +104,7 @@ run_variant() {
     --scene-frames "${SCENE_FRAMES}"
     --height "${HEIGHT}"
     --width "${WIDTH}"
-    --seed "${seed}"
+    --seed "${final_seed}"
     --print-prompt
     --output "${video_path}"
   )
@@ -143,7 +146,7 @@ run_variant() {
 
   printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
     "${slug}" "${variant}" "${status}" "${model_used}" "${video_path}" "${log_path}" "${template}" \
-    "${seed}" "${FPS}" "${FRAMES}" "${STEPS}" "${GUIDANCE}" "${SCENE_FRAMES}" \
+    "${final_seed}" "${FPS}" "${FRAMES}" "${STEPS}" "${GUIDANCE}" "${SCENE_FRAMES}" \
     "${start_utc}" "${end_utc}" "${elapsed}" >> "${SUMMARY_CSV}"
 
   printf '| %s | %s | %s | %s | `%s` |\n' \

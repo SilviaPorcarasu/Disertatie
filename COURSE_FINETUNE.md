@@ -16,6 +16,8 @@ unset T2V_LORA_PATH T2V_LORA_SCALE T2V_LORA_TRIGGER
 
 STRICT_DIFFUSION=1 bash /workspace/Disertatie/scripts/run_course_backprop_pair.sh
 STRICT_DIFFUSION=1 bash /workspace/Disertatie/scripts/run_course_ml_pack.sh
+SEED_OFFSET=100 STRICT_DIFFUSION=1 bash /workspace/Disertatie/scripts/run_course_ml_pack.sh
+SEED_OFFSET=200 STRICT_DIFFUSION=1 bash /workspace/Disertatie/scripts/run_course_ml_pack.sh
 ```
 
 This saves:
@@ -28,6 +30,8 @@ The multi-topic pack saves per-topic folders with:
 - `rag_semantic/video.mp4`
 - logs
 - summary files (`summary.csv`, `results.md`)
+
+`SEED_OFFSET` changes random seeds so you can generate diverse clips for LoRA.
 
 ## 2) Build LoRA Manifest from Saved Videos
 
